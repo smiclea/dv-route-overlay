@@ -1,0 +1,9 @@
+{
+  "Id": "DVRouteOverlay",
+  "DisplayName": "Route Overlay",
+  "Author": "derail-overlay",
+  "Version": "0.2.1",
+  "ManagerVersion": "0.27.3",
+  "AssemblyName": "DVRouteOverlay.dll",
+  "EntryMethod": "DVRouteOverlay.Main.Load"
+}
