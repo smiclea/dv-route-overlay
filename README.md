@@ -9,6 +9,21 @@ A small Unity Mod Manager mod that highlights the track ahead on the game's worl
 3. After moving, reversing, or changing a switch, press **F8** again when you want an updated route. Holding the key does not repeat the refresh.
 4. Step out to throw a switch: the last-used locomotive remains the route's origin. Refresh with the map open afterward.
 
+## Station manual route notes
+
+After an F8 refresh, open the **station maps / schematic manual** and turn to a station page. A separate text slip appears beside the right edge of the diagram, following the book when it moves. The original diagram stays unobscured. The slip shows:
+
+- Whether the last snapshot reaches a labelled track belonging to that station within its selected look-ahead distance.
+- The route distance from the snapshot's starting bogie to its first reached station track.
+- The station's track labels in the order the route uses them, and whether the current yard page has any of those tracks.
+- The snapshot number and reverser direction.
+
+Stations absent from the bounded snapshot are labelled **NOT REACHED in this snapshot**. This does not claim they are off-route: they may be beyond the distance limit or beyond an earlier dead end/loop where tracing stopped. A partially traversed track inside the limit counts; a zero-length touch at the endpoint does not. Distances and tracks remain tied to the last F8 snapshot as you drive. Up to twelve track labels are shown on the slip; longer sequences are available in the refresh log.
+
+Page-to-station matching comes from the current world's schematic-renderer page labels (for example, `[CME-A]`), with a page-count check to avoid mismatched annotations after game/world updates. Covers and legends have no note. Track ownership comes from native track IDs and the game's assigned station-track lists; unassigned connecting tracks do not receive invented track labels.
+
+The manual must exist in the scene when F8 is pressed. If you obtain or spawn another copy later, press F8 again to attach its note. Already-discovered manuals can be opened and their pages turned without any route calculation, track scan, or scene discovery. Neutral reverser, changing locomotives, unloading, or disabling the mod clears the notes with the map snapshot.
+
 There is no automatic route calculation at startup or on a timer. The line stays as the last snapshot, including its starting point, until you refresh. Changing locomotives or unloading the current one clears that snapshot. Newly created maps are discovered only when you refresh; open the world map and refresh again if the line is missing.
 
 The route starts at the locomotive's leading bogie, according to the selected direction. It ends at disconnected track, a repeated track in the same direction, or the look-ahead limit. It can also stop if track geometry is unavailable. Turntables are followed only where the game exposes a connected track; they are never moved by this mod. A trailing approach uses the game's native connection rule, which leads back to the junction's common track regardless of its selected outgoing branch. The line is a route preview, not a signal or clearance indicator.
@@ -20,6 +35,7 @@ Press **Ctrl+F10** during play to reopen Unity Mod Manager, then open **Route Ov
 | Setting | Default | Behavior |
 | --- | --- | --- |
 | Show route on world map | On | Show/hide the overlay |
+| Show route notes beside station manual pages | On | Show/hide the cached station slips independently of the world-map line |
 | Refresh route key | F8 | Manually calculate and draw the route once per press; configurable in UMM |
 | Direction source | Reverser only | Forward/reverse come from the actual reverser control at refresh time; neutral has no direction |
 | Look ahead | 15 km | Adjustable from 1–60 km |
@@ -27,6 +43,8 @@ Press **Ctrl+F10** during play to reopen Unity Mod Manager, then open **Route Ov
 | Color | Cyan | Cyan, green, or orange |
 
 The visibility toggle works immediately. Reverser, look-ahead, width and color changes apply when you next press the hotkey or click **Refresh route now**. Old saved interval and direction-override settings are ignored.
+
+You can hide the world-map line and still press F8 to prepare station notes. Disabling the station-note display hides its slips without requesting another route calculation.
 
 The only source of route direction is `SimController.controlsOverrider.Reverser.Value`, read once per manual refresh. The game's common control uses `0` for reverse, `0.5` for neutral, and `1` for forward; analog steam cutoff positions on either side of neutral select the corresponding direction. Neutral clears the line and displays a message asking you to select forward or reverse. A missing or invalid reverser never falls back to vehicle motion, facing, a remembered direction, or a manual override. There is no speed/direction observation running between refreshes. The game's native bogie track-orientation sign maps the reverser direction into the rail segment's coordinate order.
 
@@ -47,11 +65,15 @@ The install script copies only this mod's files into `Mods/DVRouteOverlay`, pres
 
 ## Validation
 
-The project is compiled against the locally installed game and Unity Mod Manager assemblies. The standalone checks cover route traversal, floating-point endpoint regressions, bounded forward/reverse sampling, point-interval lookup, and forward/reverse/neutral/analog/invalid reverser values.
+The project is compiled against the locally installed game and Unity Mod Manager assemblies. The standalone checks cover route traversal, floating-point endpoint regressions, bounded forward/reverse sampling, point-interval lookup, reverser values, station entry distances, ordered station tracks, bounded reachability, zero-length contacts, and station/yard page matching.
+
+Version 0.3.0 adds station notes. Their physical placement and readability still need an in-game check: refresh with the schematic manual available, open a reached station's page, check its track sequence, flip to another yard and an unreached station, then check cover/legend pages. Confirm that opening/flipping the book does not trigger a refresh or recurring hitch. The visibility setting should hide/reveal the slip without recomputing the route. Page/UI failures are isolated so they cannot discard a successfully rendered world-map line.
 
 The initial version was confirmed working in-game by the user. Version 0.1.1 caused recurring stutters, so version 0.2.0 removed periodic refreshes. Logs from version 0.2.0 confirmed `ArgumentOutOfRangeException` in point-set sampling, which caused the route to be cleared after an F8 press. Version 0.2.1 fixes that sampling boundary, uses only the reverser for direction, and retains an existing snapshot if later sampling fails. These changes still need an in-game check: keep the locomotive stationary, refresh with the reverser forward and reverse, confirm the route flips, then try neutral. Open the map, change a switch, and confirm the snapshot stays unchanged until F8 is pressed again. Check alignment after an origin shift and after loading another save.
 
 Each manual refresh writes a numbered diagnostic to `DerailValley_Data/Managed/UnityModManager/Log.txt`, prefixed with `DVRouteOverlay`. It records the locomotive ID, raw reverser value and control port, start track/span, bogie-to-track orientation, distance, track/sample counts, map activity and vertex counts, stop reason, and timing for traversal, sampling, map discovery and drawing. Failures include the stage, exact track/sample bounds, and full exception. No per-frame or per-sample log spam is emitted. If a line still fails to appear, reproduce it once and share this log before launching another game session, which may replace it.
+
+Station diagnostics add the number of reached stations, discovered manuals, page definitions, the full station track sequences, entry distances, and station-note preparation time. Unknown page layouts hide their notes and emit a diagnostic rather than assigning a guessed station.
 
 ## Implementation
 

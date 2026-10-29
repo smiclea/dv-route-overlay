@@ -8,6 +8,7 @@ class Program
     {
         internal double Length = 100;
         internal RouteWalker.Connection<Track> In, Out;
+        internal StationTrackAddress Address;
     }
     static RouteWalker.Result<Track> Walk(Track start, double span = 25, bool forward = true, double limit = 1000)
         => RouteWalker.Walk(start, span, forward, limit, t => t.Length, (t, d) => d ? t.Out : t.In);
@@ -51,7 +52,8 @@ class Program
         Check(r.Segments.Count == 3 && r.Segments[2].From == 100 && r.Segments[2].To == 0,
             "Can revisit a track in the opposite direction before stopping");
         SamplingAndReverserChecks();
-        Console.WriteLine("All 19 route, sampling and reverser checks passed.");
+        StationSnapshotChecks();
+        Console.WriteLine("All 29 route, sampling, reverser and station snapshot checks passed.");
     }
 
     static void SamplingAndReverserChecks()
@@ -103,5 +105,41 @@ class Program
         try { SamplingMath.SampleSpan(0, double.NaN, 9, 9, length); }
         catch (ArgumentOutOfRangeException) { invalidSpanRejected = true; }
         Check(invalidSpanRejected, "Corrupt span data is rejected with a useful failure instead of invalid vertices");
+    }
+
+    static void StationSnapshotChecks()
+    {
+        var approach = new Track();
+        var a1 = new Track { Address = new StationTrackAddress { StationId = "SM", TrackLabel = "A1S" } };
+        var a1Again = new Track { Address = new StationTrackAddress { StationId = "SM", TrackLabel = "A1S" } };
+        var b2 = new Track { Address = new StationTrackAddress { StationId = "SM", TrackLabel = "B2I" } };
+        var beyond = new Track { Address = new StationTrackAddress { StationId = "CME", TrackLabel = "A1S" } };
+        approach.Out = new RouteWalker.Connection<Track>(a1, true);
+        a1.Out = new RouteWalker.Connection<Track>(a1Again, false);
+        a1Again.In = new RouteWalker.Connection<Track>(b2, true);
+        b2.Out = new RouteWalker.Connection<Track>(beyond, true);
+        var route = Walk(approach, limit: 320);
+        var snapshot = StationSnapshot.Build(route, track => track.Address, 320, 7, "forward");
+        Check(snapshot.Visits["SM"].EntryDistance == 75, "Station distance includes the remaining partial approach track");
+        Check(snapshot.Visits["SM"].Tracks.SequenceEqual(new[] { "A1S", "B2I" }), "Station track order handles reversed segments and consecutive duplicate labels");
+        Check(!snapshot.Visits.ContainsKey("CME"), "A station beyond the selected route limit is not marked as reached");
+        var atStation = StationSnapshot.Build(Walk(a1, limit: 40), track => track.Address, 40, 8, "reverse");
+        Check(atStation.Visits["SM"].EntryDistance == 0, "Starting inside a station records zero distance to its first track");
+        Check(StationSnapshot.MatchPage("[SM-A]", new[] { "SM", "CME" }) == "SM" &&
+            StationSnapshot.MatchPage("[SM-B]", new[] { "SM", "CME" }) == "SM", "Different yard pages map to the same station");
+        Check(StationSnapshot.MatchPage("[ST-E-A]", new[] { "ST", "ST-E" }) == "ST-E" &&
+            StationSnapshot.MatchPage("[SME-A]", new[] { "SM" }) == null, "Page matching respects station boundaries and prefers the longest exact station ID");
+        Check(StationSnapshot.MatchPage("[Cover]", new[] { "SM" }) == null &&
+            StationSnapshot.MatchPage("[Legend]", new[] { "SM" }) == null, "Cover and legend cannot accidentally receive station notes");
+        string note = snapshot.NoteFor("CME", "CME-A");
+        Check(note.Contains("NOT REACHED in this snapshot") && note.Contains("Route traced: 0.3 km") && note.Contains("beyond the traced route"),
+            "Unreached station text describes the bounded snapshot without claiming the station is off-route");
+        Check(snapshot.NoteFor("SM", "SM-A").Contains("Includes tracks on this yard page") &&
+            snapshot.NoteFor("SM", "SM-C").Contains("No labelled tracks on this yard page"), "Notes distinguish the current yard page from other yards at the station");
+        var zeroRoute = new RouteWalker.Result<Track>();
+        zeroRoute.Segments.Add(new RouteWalker.Segment<Track> { Track = a1, From = 100, To = 100 });
+        var zero = StationSnapshot.Build(zeroRoute, track => track.Address, 15000, 9, "forward");
+        Check(zero.Visits.Count == 0 && snapshot.NoteFor("SM", "SM-A").Contains("SNAPSHOT #7"),
+            "Zero-length station contact is excluded and cached notes retain their refresh identity");
     }
 }

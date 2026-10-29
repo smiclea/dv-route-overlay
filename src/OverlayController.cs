@@ -13,9 +13,11 @@ namespace DVRouteOverlay
         internal string Status { get; private set; } = "Enter a locomotive, open the world map, and press the refresh key.";
         private readonly Dictionary<MapMarkersController, MapRibbon> maps = new Dictionary<MapMarkersController, MapRibbon>();
         private readonly List<Vector3> routePoints = new List<Vector3>();
+        private readonly StationManualNotes stationNotes = new StationManualNotes();
         private TrainCar lastCar;
         private bool refreshRequested;
         private bool lastShowOverlay = true;
+        private bool lastShowStationNotes = true;
         private float nextErrorLog;
         private int refreshSequence;
         private string refreshStage;
@@ -34,6 +36,11 @@ namespace DVRouteOverlay
                 {
                     lastShowOverlay = Main.Settings.ShowOverlay;
                     foreach (var map in maps.Values) map.SetVisible(lastShowOverlay);
+                }
+                if (Main.Settings.ShowStationNotes != lastShowStationNotes)
+                {
+                    lastShowStationNotes = Main.Settings.ShowStationNotes;
+                    stationNotes.SetVisible(lastShowStationNotes);
                 }
                 // Ignore the hotkey while UMM is open, including its keybinding capture popup.
                 // The settings button queues the same one-shot refresh for this Update.
@@ -100,7 +107,6 @@ namespace DVRouteOverlay
 
         private void Refresh(int request, Stopwatch clock)
         {
-            if (!Main.Settings.ShowOverlay) { Hide(); Status = "Overlay hidden."; Log("Refresh #{0}: overlay hidden.", request); return; }
             // LastLoco keeps the overlay useful while you step out to throw a switch.
             var car = lastCar;
             if (!car) { RejectRefresh(request, "Enter a locomotive to display its route."); return; }
@@ -141,7 +147,7 @@ namespace DVRouteOverlay
             foreach (var item in maps)
             {
                 if (!item.Key) { item.Value.Hide(); continue; }
-                bool active = item.Key.isActiveAndEnabled;
+                bool active = item.Key.isActiveAndEnabled && Main.Settings.ShowOverlay;
                 bool drawn = false;
                 if (!active) item.Value.Hide();
                 else drawn = item.Value.Draw(routePoints, Main.Settings.WidthMm * 0.001f, RouteColor());
@@ -156,6 +162,49 @@ namespace DVRouteOverlay
             Log("Refresh #{0} complete: distance={1:0.0} m, tracks={2}, samples={3}, drawnMaps={4}/{5}, stop={6}; total={7:0.0} ms (walk={8:0.0}, sample={9:0.0}, maps={10:0.0}, draw={11:0.0}).",
                 request, route.Distance, route.Segments.Count, routePoints.Count, visible, maps.Count, route.StopReason,
                 clock.Elapsed.TotalMilliseconds, walkedAt - walkStart, sampledAt - walkedAt, mapsAt - sampledAt, clock.Elapsed.TotalMilliseconds - mapsAt);
+            try
+            {
+                double notesStart = clock.Elapsed.TotalMilliseconds;
+                var addresses = StationAddresses(route);
+                var snapshot = StationSnapshot.Build(route, track => addresses[track], Main.Settings.DistanceKm * 1000,
+                    request, direction > 0 ? "forward" : "reverse");
+                stationNotes.SetVisible(Main.Settings.ShowStationNotes);
+                stationNotes.Publish(snapshot);
+                Log("Refresh #{0}: station notes prepared in {1:0.0} ms; combined total={2:0.0} ms.",
+                    request, clock.Elapsed.TotalMilliseconds - notesStart, clock.Elapsed.TotalMilliseconds);
+            }
+            catch (Exception ex)
+            {
+                // A manual integration failure must not discard the world-map route.
+                stationNotes.Clear();
+                Main.Entry.Logger.Error("Station notes could not be updated; world-map route retained. " + ex);
+            }
+        }
+
+        private static Dictionary<RailTrack, StationTrackAddress> StationAddresses(RouteWalker.Result<RailTrack> route)
+        {
+            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var assigned = new Dictionary<RailTrack, string>();
+            foreach (var station in StationController.allStations)
+            {
+                if (!station || station.stationInfo == null) continue;
+                string id = station.stationInfo.YardID;
+                known.Add(id);
+                if (station.AllStationTracks != null)
+                    foreach (var track in station.AllStationTracks) if (track) assigned[track] = id;
+            }
+            var addresses = new Dictionary<RailTrack, StationTrackAddress>();
+            foreach (var segment in route.Segments)
+            {
+                if (addresses.ContainsKey(segment.Track)) continue;
+                var logic = segment.Track.LogicTrack();
+                var id = logic != null ? logic.ID : null;
+                string stationId = id != null && known.Contains(id.yardId ?? "") ? id.yardId : null;
+                if (stationId == null) assigned.TryGetValue(segment.Track, out stationId);
+                addresses[segment.Track] = stationId == null ? null : new StationTrackAddress {
+                    StationId = stationId, TrackLabel = id != null ? id.TrackPartOnly : segment.Track.name };
+            }
+            return addresses;
         }
 
         private static double TrackLength(RailTrack track)
@@ -224,6 +273,7 @@ namespace DVRouteOverlay
         private void Hide() { foreach (var map in maps.Values) map.Hide(); }
         internal void Clear()
         {
+            stationNotes.Clear();
             foreach (var map in maps.Values) map.Dispose();
             maps.Clear();
             routePoints.Clear();

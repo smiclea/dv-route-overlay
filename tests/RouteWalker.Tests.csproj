@@ -8,6 +8,7 @@
     <Compile Include="../src/RouteWalker.cs" Link="RouteWalker.cs" />
     <Compile Include="../src/SamplingMath.cs" Link="SamplingMath.cs" />
     <Compile Include="../src/ReverserDirection.cs" Link="ReverserDirection.cs" />
+    <Compile Include="../src/StationSnapshot.cs" Link="StationSnapshot.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
 </Project>
