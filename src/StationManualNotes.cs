@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using DV.Booklets.Rendered;
 using DV.RenderTextureSystem.BookletRender;
 using UnityEngine;
@@ -63,6 +64,7 @@ namespace DVRouteOverlay
             private Text text;
             private bool visible = true;
             private bool mismatchLogged;
+            private string lastDiagnostic;
 
             internal ManualNote(PageBook book, string[] labels, List<string> stationIds)
             {
@@ -73,8 +75,12 @@ namespace DVRouteOverlay
 
             internal void SetSnapshot(StationSnapshot value)
             { snapshot = value; pageText.Clear(); RefreshText(); }
-            internal void SetVisible(bool value) { visible = value; RefreshText(); }
-            private void OnPageFlipped(int _) { RefreshText(); }
+            internal void SetVisible(bool value) { if (visible == value) return; visible = value; RefreshText(); }
+            private void OnPageFlipped(int page)
+            {
+                Main.Entry.Logger.Log("Station manual page flip: book=" + (book ? book.name : "destroyed") + ", page=" + page + ".");
+                RefreshText();
+            }
             private void OnGenerated() { RefreshText(); }
 
             private void RefreshText()
@@ -82,27 +88,31 @@ namespace DVRouteOverlay
                 try
                 {
                     if (!book || !visible || snapshot == null || !book.PagesGenerated)
-                    { if (host) host.SetActive(false); return; }
+                    { if (host) host.SetActive(false); LogState("waiting/hidden", null); return; }
                     if (book.PageNum != labels.Length)
                     {
                         if (host) host.SetActive(false);
                         if (!mismatchLogged) Main.Entry.Logger.Error("Station manual page count differs from its world definitions; notes hidden to avoid labelling the wrong station.");
                         mismatchLogged = true;
+                        LogState("page count mismatch", null);
                         return;
                     }
                     int page = book.currentPage;
-                    if (page < 0 || page >= labels.Length) { if (host) host.SetActive(false); return; }
+                    if (page < 0 || page >= labels.Length) { if (host) host.SetActive(false); LogState("invalid page index", null); return; }
                     string stationId = StationSnapshot.MatchPage(labels[page], stationIds);
-                    if (stationId == null) { if (host) host.SetActive(false); return; } // Cover and legend stay clear.
-                    if (!host) CreateSlip();
+                    if (stationId == null) { if (host) host.SetActive(false); LogState("page has no station match", null); return; } // Cover and legend stay clear.
+                    if (!host) CreateFooter();
+                    PositionFooter();
                     string content;
                     if (!pageText.TryGetValue(page, out content))
                     {
-                        content = snapshot.NoteFor(stationId, StationSnapshot.NormalizePage(labels[page]));
+                        content = snapshot.FooterFor(stationId);
                         pageText.Add(page, content);
                     }
                     text.text = content;
+                    FitFooterText();
                     host.SetActive(true);
+                    LogState("shown", stationId);
                 }
                 catch (Exception ex)
                 {
@@ -112,47 +122,104 @@ namespace DVRouteOverlay
                 }
             }
 
-            private void CreateSlip()
+            private void CreateFooter()
             {
-                // The manual's A3 page template is scaled to approximately 0.232 x 0.300 m.
-                // Attach a separate slip beside its right edge, keeping the diagram unobscured.
-                var page = book.pages.Count > 0 ? book.pages[0] : null;
-                Vector3 scale = page ? page.transform.localScale : new Vector3(0.78f, 0.8f, 0.715f);
-                float width = 0.297f * Mathf.Abs(scale.x);
-                float height = 0.420f * Mathf.Abs(scale.z);
-                int layer = page && page.renderer ? page.renderer.gameObject.layer : book.gameObject.layer;
-                host = new GameObject("DVRouteOverlay Station Note", typeof(RectTransform), typeof(Canvas));
-                host.layer = layer;
-                host.transform.SetParent(book.transform, false);
-                host.transform.localPosition = new Vector3(width + 0.008f, 0.008f, height * 0.88f);
-                host.transform.localRotation = Quaternion.Euler(90, 0, 0);
-                host.transform.localScale = Vector3.one * 0.00025f;
-                var rect = (RectTransform)host.transform;
-                rect.pivot = new Vector2(0, 1);
-                rect.sizeDelta = new Vector2(800, 600);
+                host = new GameObject("DVRouteOverlay Station Footer", typeof(RectTransform), typeof(Canvas));
                 var canvas = host.GetComponent<Canvas>();
                 canvas.renderMode = RenderMode.WorldSpace;
                 canvas.sortingOrder = 10;
-                var background = host.AddComponent<Image>();
-                background.color = new Color(0.97f, 0.95f, 0.86f, 1);
-                background.raycastTarget = false;
-                var label = new GameObject("Route Note Text", typeof(RectTransform));
-                label.layer = layer;
+                host.transform.SetParent(book.transform, false);
+                // The schematic's printed text runs along book -Z, with its top toward +X.
+                // Match that UV orientation instead of the book transform's +X direction.
+                host.transform.localRotation = Quaternion.LookRotation(Vector3.down, Vector3.right);
+                host.transform.localScale = Vector3.one * 0.00025f;
+                var rect = (RectTransform)host.transform;
+                rect.pivot = new Vector2(1, 0);
+                var label = new GameObject("Route Footer Text", typeof(RectTransform));
                 label.transform.SetParent(host.transform, false);
                 var labelRect = (RectTransform)label.transform;
                 labelRect.anchorMin = Vector2.zero; labelRect.anchorMax = Vector2.one;
-                labelRect.offsetMin = new Vector2(28, 24); labelRect.offsetMax = new Vector2(-28, -24);
+                labelRect.offsetMin = Vector2.zero; labelRect.offsetMax = Vector2.zero;
                 text = label.AddComponent<Text>();
                 text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-                text.fontSize = 30;
-                text.resizeTextForBestFit = true;
-                text.resizeTextMinSize = 22; text.resizeTextMaxSize = 30;
+                text.fontSize = 28;
+                text.resizeTextForBestFit = false;
                 text.color = new Color(0.08f, 0.12f, 0.14f, 1);
-                text.alignment = TextAnchor.UpperLeft;
-                text.horizontalOverflow = HorizontalWrapMode.Wrap;
+                text.alignment = TextAnchor.MiddleRight;
+                text.horizontalOverflow = HorizontalWrapMode.Overflow;
                 text.verticalOverflow = VerticalWrapMode.Truncate;
                 text.supportRichText = false;
                 text.raycastTarget = false;
+            }
+
+            private void PositionFooter()
+            {
+                if (book.pages.Count == 0) throw new InvalidOperationException("The station manual has no physical pages.");
+                var page = book.pages[Mathf.Clamp(book.currentPage, 0, book.pages.Count - 1)];
+                if (!page || !page.renderer) throw new InvalidOperationException("The current station page has no renderer.");
+                // Page mesh coordinates and pivots are not the physical page edges. Transform all
+                // eight local-bounds corners into book space, including the model's own rotation/scale.
+                var bounds = page.renderer.localBounds;
+                var min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+                var max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+                for (int i = 0; i < 8; i++)
+                {
+                    var corner = bounds.center + Vector3.Scale(bounds.extents,
+                        new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
+                    var point = book.transform.InverseTransformPoint(page.renderer.transform.TransformPoint(corner));
+                    min = Vector3.Min(min, point); max = Vector3.Max(max, point);
+                }
+                // Printed-page right is book -Z, and printed-page up is book +X.
+                // Position above the bookmark strip in the page's bottom-right margin.
+                // Reset to book space before sizing, then attach to the current leaf so
+                // the footer follows the book's animated pivot and page-stack offsets.
+                host.transform.SetParent(book.transform, false);
+                host.transform.localRotation = Quaternion.LookRotation(Vector3.down, Vector3.right);
+                host.transform.localScale = Vector3.one * 0.00025f;
+                var rect = (RectTransform)host.transform;
+                float inset = 0.007f;
+                float lineHeight = 0.014f;
+                rect.sizeDelta = new Vector2(Mathf.Max(0.05f, max.z - min.z - 2 * inset) / 0.00025f,
+                    lineHeight / 0.00025f);
+                host.transform.localPosition = new Vector3(min.x + (max.x - min.x) * 0.10f,
+                    max.y + 0.002f, min.z + inset);
+                host.transform.SetParent(page.transform, true);
+                host.layer = page.renderer.gameObject.layer;
+                text.gameObject.layer = host.layer;
+            }
+
+            private void FitFooterText()
+            {
+                text.fontSize = 28;
+                float available = ((RectTransform)host.transform).rect.width;
+                float preferred = text.preferredWidth;
+                if (preferred > available)
+                    text.fontSize = Mathf.Max(12, Mathf.FloorToInt(28 * available / preferred));
+            }
+
+            private void LogState(string reason, string stationId)
+            {
+                string label = book && book.currentPage >= 0 && book.currentPage < labels.Length ? labels[book.currentPage] : "none";
+                string diagnostic = string.Format(CultureInfo.InvariantCulture,
+                    "Station note: state={0}, snapshot={1}, book={2}, active={3}, generated={4}, pages={5}/{6}, page={7}, label={8}, station={9}, enabled={10}, host={11}, font={12}",
+                    reason, snapshot != null ? snapshot.Revision : 0, book ? book.name : "none",
+                    book && book.gameObject.activeInHierarchy, book && book.PagesGenerated,
+                    book && book.pageTextures != null ? book.pageTextures.Length : 0, labels.Length,
+                    book ? book.currentPage : -1, label, stationId ?? "none", visible,
+                    host && host.activeInHierarchy, text && text.font ? text.font.name : "none");
+                if (diagnostic == lastDiagnostic) return;
+                lastDiagnostic = diagnostic;
+                Main.Entry.Logger.Log(diagnostic + ".");
+                if (!host || reason != "shown") return;
+                var camera = PlayerManager.ActiveCamera;
+                var rect = (RectTransform)host.transform;
+                var center = rect.TransformPoint(rect.rect.center);
+                var viewport = camera ? camera.WorldToViewportPoint(center) : Vector3.zero;
+                Main.Entry.Logger.Log(string.Format(CultureInfo.InvariantCulture,
+                    "Station note layout: local={0}, world={1}, scale={2}, layer={3}, camera={4}, layerInCamera={5}, centerViewport={6}, facingCamera={7}.",
+                    host.transform.localPosition.ToString("F4"), center.ToString("F4"), host.transform.lossyScale.ToString("F5"), host.layer,
+                    camera ? camera.name : "none", camera && (camera.cullingMask & (1 << host.layer)) != 0,
+                    viewport.ToString("F4"), camera && Vector3.Dot(-host.transform.forward, camera.transform.position - center) > 0));
             }
 
             public void Dispose()

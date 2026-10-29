@@ -53,7 +53,7 @@ class Program
             "Can revisit a track in the opposite direction before stopping");
         SamplingAndReverserChecks();
         StationSnapshotChecks();
-        Console.WriteLine("All 29 route, sampling, reverser and station snapshot checks passed.");
+        Console.WriteLine("All 30 route, sampling, reverser and station snapshot checks passed.");
     }
 
     static void SamplingAndReverserChecks()
@@ -131,15 +131,20 @@ class Program
             StationSnapshot.MatchPage("[SME-A]", new[] { "SM" }) == null, "Page matching respects station boundaries and prefers the longest exact station ID");
         Check(StationSnapshot.MatchPage("[Cover]", new[] { "SM" }) == null &&
             StationSnapshot.MatchPage("[Legend]", new[] { "SM" }) == null, "Cover and legend cannot accidentally receive station notes");
-        string note = snapshot.NoteFor("CME", "CME-A");
-        Check(note.Contains("NOT REACHED in this snapshot") && note.Contains("Route traced: 0.3 km") && note.Contains("beyond the traced route"),
-            "Unreached station text describes the bounded snapshot without claiming the station is off-route");
-        Check(snapshot.NoteFor("SM", "SM-A").Contains("Includes tracks on this yard page") &&
-            snapshot.NoteFor("SM", "SM-C").Contains("No labelled tracks on this yard page"), "Notes distinguish the current yard page from other yards at the station");
+        Check(snapshot.FooterFor("CME") == "Not passing (in snapshot)",
+            "Short footer qualifies non-passing against the bounded snapshot");
+        Check(snapshot.FooterFor("SM") == "Passing through A1S -> B2I" && !snapshot.FooterFor("SM").Contains('\n'),
+            "Passing footer is a single line of track labels in route order");
         var zeroRoute = new RouteWalker.Result<Track>();
         zeroRoute.Segments.Add(new RouteWalker.Segment<Track> { Track = a1, From = 100, To = 100 });
         var zero = StationSnapshot.Build(zeroRoute, track => track.Address, 15000, 9, "forward");
-        Check(zero.Visits.Count == 0 && snapshot.NoteFor("SM", "SM-A").Contains("SNAPSHOT #7"),
-            "Zero-length station contact is excluded and cached notes retain their refresh identity");
+        Check(zero.Visits.Count == 0 && snapshot.Revision == 7,
+            "Zero-length station contact is excluded and cached footers retain their refresh identity");
+        var many = new StationVisit();
+        many.Tracks.AddRange(Enumerable.Range(1, 12).Select(i => "E" + i));
+        zero.Visits.Add("HB", many);
+        string compact = zero.FooterFor("HB");
+        Check(compact.EndsWith("E8 (+4 more)") && !compact.Contains('\n') && many.Tracks.Count == 12,
+            "Long footers stay compact without discarding the full cached station track sequence");
     }
 }

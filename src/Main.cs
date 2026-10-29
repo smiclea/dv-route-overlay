@@ -71,7 +71,7 @@ namespace DVRouteOverlay
         private static void DrawSettings(UnityModManager.ModEntry entry)
         {
             Settings.ShowOverlay = GUILayout.Toggle(Settings.ShowOverlay, "Show route on world map");
-            Settings.ShowStationNotes = GUILayout.Toggle(Settings.ShowStationNotes, "Show route notes beside station manual pages");
+            Settings.ShowStationNotes = GUILayout.Toggle(Settings.ShowStationNotes, "Show route text on station manual pages");
             GUILayout.Label("Station notes reuse the last refresh snapshot; turning pages never recalculates the route.");
             GUILayout.Label("Follows your current / last-used locomotive through the currently selected switches.");
             GUILayout.Label("Direction comes only from the reverser. Select forward or reverse before refreshing; neutral has no route direction.");

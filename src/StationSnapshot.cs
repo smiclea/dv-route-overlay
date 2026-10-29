@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.Text;
 
 namespace DVRouteOverlay
 {
@@ -50,44 +48,15 @@ namespace DVRouteOverlay
             return snapshot;
         }
 
-        internal string NoteFor(string stationId, string pageLabel)
+        internal string FooterFor(string stationId)
         {
-            var text = new StringBuilder();
-            text.Append("ROUTE SNAPSHOT #").Append(Revision).Append('\n').Append(pageLabel).Append('\n');
             StationVisit visit;
-            if (Visits.TryGetValue(stationId, out visit))
-            {
-                text.Append("REACHED within ").Append(Km(Limit)).Append(" km\n");
-                text.Append("First station track: ").Append(Km(visit.EntryDistance)).Append(" km ahead\n");
-                text.Append("Tracks, in route order:\n");
-                // Keep the slip readable; the full sequence remains in the refresh log.
-                int shown = Math.Min(visit.Tracks.Count, 12);
-                for (int i = 0; i < shown; i++)
-                {
-                    if (i > 0) text.Append(" > ");
-                    text.Append(visit.Tracks[i]);
-                }
-                if (shown < visit.Tracks.Count) text.Append(" (+").Append(visit.Tracks.Count - shown).Append(" more)");
-                string yard = PageYard(pageLabel, stationId);
-                if (!string.IsNullOrEmpty(yard))
-                {
-                    bool onPage = visit.Tracks.Exists(track => track.StartsWith(yard, StringComparison.OrdinalIgnoreCase));
-                    text.Append('\n').Append(onPage ? "Includes tracks on this yard page." : "No labelled tracks on this yard page.");
-                }
-            }
-            else
-            {
-                text.Append("NOT REACHED in this snapshot\n");
-                text.Append("Look-ahead limit: ").Append(Km(Limit)).Append(" km\n");
-                text.Append("Route traced: ").Append(Km(TracedDistance)).Append(" km\n");
-                text.Append("It may lie beyond the traced route.\n");
-                text.Append("Stop: ").Append(StopReason);
-            }
-            text.Append("\nReverser: ").Append(Reverser).Append(" | Use refresh key to update");
-            return text.ToString();
+            if (!Visits.TryGetValue(stationId, out visit) || visit.Tracks.Count == 0)
+                return "Not passing (in snapshot)";
+            int shown = Math.Min(visit.Tracks.Count, 8);
+            string sequence = string.Join(" -> ", visit.Tracks.GetRange(0, shown));
+            return "Passing through " + sequence + (shown < visit.Tracks.Count ? " (+" + (visit.Tracks.Count - shown) + " more)" : "");
         }
-
-        private static string Km(double metres) { return (metres / 1000).ToString("0.0", CultureInfo.InvariantCulture); }
 
         internal static string MatchPage(string label, IEnumerable<string> stationIds)
         {
@@ -100,10 +69,5 @@ namespace DVRouteOverlay
         }
 
         internal static string NormalizePage(string label) { return (label ?? "").Trim().Trim('[', ']').Trim(); }
-        private static string PageYard(string label, string stationId)
-        {
-            string page = NormalizePage(label);
-            return page.StartsWith(stationId + "-", StringComparison.OrdinalIgnoreCase) ? page.Substring(stationId.Length + 1) : "";
-        }
     }
 }
